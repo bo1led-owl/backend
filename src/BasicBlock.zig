@@ -10,9 +10,7 @@ pub const ValueList = @import("ValueList.zig");
 instructions: ValueList,
 arguments: ValueList,
 
-pub fn init() Self {
-    return .{
-        .instructions = .empty,
-        .arguments = .empty,
-    };
-}
+pub const empty: Self = .{
+    .instructions = .empty,
+    .arguments = .empty,
+};

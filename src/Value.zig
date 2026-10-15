@@ -8,6 +8,10 @@ const Type = @import("types.zig").Type;
 pub const Index = enum(u32) {
     _,
 
+    pub fn toU32(self: Value.Index) u32 {
+        return @backingInt(self);
+    }
+
     pub fn toIndexOpt(self: Value.Index) Value.IndexOpt {
         std.debug.assert(@backingInt(self) != @backingInt(IndexOpt.none));
         return @fromBackingInt(@intCast(@backingInt(self)));
@@ -18,11 +22,18 @@ pub const IndexOpt = enum(u32) {
     none = std.math.maxInt(u32),
     _,
 
+    pub fn toU32(self: Value.IndexOpt) ?u32 {
+        if (self == .none) {
+            return null;
+        }
+        return @backingInt(self);
+    }
+
     pub fn toIndex(self: Value.IndexOpt) ?Value.Index {
         if (self == .none) {
             return null;
         }
-        return @fromBackingInt(@intCast(@backingInt(self)));
+        return @fromBackingInt(@backingInt(self));
     }
 };
 
@@ -72,7 +83,7 @@ pub const Kind = enum(u8) {
     cmp_eq,
     /// inequality comparison instruction
     /// `data` is `binary`
-    cmp_sne,
+    cmp_ne,
     /// signed less-than comparison instruction
     /// `data` is `binary`
     cmp_slt,
@@ -122,34 +133,39 @@ pub const Kind = enum(u8) {
     /// `data` is `unary_opt`
     ret,
 
-    // pub fn is_instruction(self: Kind) bool {
-    //     return switch (self) {
-    //         .truncate,
-    //         .sign_extend,
-    //         .zero_extend,
-    //         .negate,
-    //         .add,
-    //         .sub,
-    //         .mul,
-    //         .div,
-    //         .cmp_eq,
-    //         .cmp_ne,
-    //         .cmp_lt,
-    //         .cmp_gt,
-    //         .cmp_le,
-    //         .cmp_ge,
-    //         .stack_load,
-    //         .stack_store,
-    //         .stack_address,
-    //         .load,
-    //         .store,
-    //         .jump,
-    //         .br,
-    //         .ret,
-    //         => true,
-    //         .block_argument, .stack_slot, .constant => false,
-    //     };
-    // }
+    pub fn isInstruction(self: Kind) bool {
+        return switch (self) {
+            .truncate,
+            .sign_extend,
+            .zero_extend,
+            .negate,
+            .add,
+            .sub,
+            .mul,
+            .sdiv,
+            .udiv,
+            .cmp_eq,
+            .cmp_ne,
+            .cmp_slt,
+            .cmp_sgt,
+            .cmp_sle,
+            .cmp_sge,
+            .cmp_ult,
+            .cmp_ugt,
+            .cmp_ule,
+            .cmp_uge,
+            .stack_load,
+            .stack_store,
+            .stack_address,
+            .load,
+            .store,
+            .jump,
+            .br,
+            .ret,
+            => true,
+            .block_argument, .stack_slot, .constant => false,
+        };
+    }
 };
 
 pub const Data = union {

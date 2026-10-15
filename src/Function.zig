@@ -2,6 +2,7 @@ const Self = @This();
 
 const std = @import("std");
 const Value = @import("Value.zig");
+const Context = @import("Context.zig");
 const BasicBlock = @import("BasicBlock.zig");
 
 blocks: std.ArrayList(BasicBlock),
@@ -11,14 +12,13 @@ pub const empty: Self = .{
     .blocks = .empty,
 };
 
-pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
-    self.blocks.deinit(gpa);
+pub fn deinit(self: *Self, ctx: Context) void {
+    self.blocks.deinit(ctx.gpa);
     self.* = undefined;
 }
 
-// TODO: wrapper in context? it is the one who manages the allocator
-pub fn addBlock(self: *Self, gpa: std.mem.Allocator, bb: BasicBlock) !BasicBlock.Index {
+pub fn addBlock(self: *Self, ctx: Context, bb: BasicBlock) !BasicBlock.Index {
     const res: BasicBlock.Index = @fromBackingInt(@intCast(self.blocks.items.len));
-    try self.blocks.append(gpa, bb);
+    try self.blocks.append(ctx.gpa, bb);
     return res;
 }

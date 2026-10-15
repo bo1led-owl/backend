@@ -1,6 +1,8 @@
 const std = @import("std");
 
-pub const types = @import("types.zig");
+const types = @import("types.zig");
+pub const Type = types.Type;
+
 pub const Context = @import("Context.zig");
 pub const Builder = @import("Builder.zig");
 pub const BasicBlock = @import("BasicBlock.zig");

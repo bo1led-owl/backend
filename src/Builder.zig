@@ -4,96 +4,127 @@ const std = @import("std");
 const Context = @import("Context.zig");
 const Type = @import("types.zig").Type;
 const Value = @import("Value.zig");
+const Function = @import("Function.zig");
 const BasicBlock = @import("BasicBlock.zig");
 const ValueList = @import("ValueList.zig");
 
 /// current IR context
 ctx: *Context,
 
-/// instruction list being operated on
-instruction_list: *ValueList,
+/// function being operated on
+function: *Function,
+
+/// basic block being operated on
+block: BasicBlock.Index,
 
 /// index of instruction AFTER which new instructions are inserted
 /// `.none` means prepending an instruction
 insertion_point: Value.IndexOpt,
 
-pub fn initAtStart(ctx: *Context, instruction_list: *ValueList) Self {
-    var res: Self = .{ .ctx = ctx, .instruction_list = undefined, .insertion_point = undefined };
-    res.positionAtStart(instruction_list);
+pub fn initAtStart(ctx: *Context, function: *Function, block: BasicBlock.Index) Self {
+    var res: Self = .{
+        .ctx = ctx,
+        .function = undefined,
+        .block = undefined,
+        .insertion_point = undefined,
+    };
+    res.positionAtStart(function, block);
     return res;
 }
 
-pub fn initAtEnd(ctx: *Context, instruction_list: *ValueList) Self {
-    var res: Self = .{ .ctx = ctx, .instruction_list = undefined, .insertion_point = undefined };
-    res.positionAtEnd(instruction_list);
+pub fn initAtEnd(ctx: *Context, function: *Function, block: BasicBlock.Index) Self {
+    var res: Self = .{
+        .ctx = ctx,
+        .function = undefined,
+        .block = undefined,
+        .insertion_point = undefined,
+    };
+    res.positionAtEnd(function, block);
     return res;
 }
 
-pub fn initAfter(ctx: *Context, instruction_list: *ValueList, instruction_index: Value.Index) Self {
-    var res: Self = .{ .ctx = ctx, .instruction_list = undefined, .insertion_point = undefined };
-    res.positionAfter(instruction_list, instruction_index);
+pub fn initAfter(ctx: *Context, function: *Function, block: BasicBlock.Index, instruction_index: Value.Index) Self {
+    var res: Self = .{
+        .ctx = ctx,
+        .function = function,
+        .block = block,
+        .insertion_point = undefined,
+    };
+    res.positionAfter(function, block, instruction_index);
     return res;
 }
 
-pub fn initBefore(ctx: *Context, instruction_list: *ValueList, instruction_index: Value.Index) Self {
-    var res: Self = .{ .ctx = ctx, .instruction_list = undefined, .insertion_point = undefined };
-    res.positionBefore(instruction_list, instruction_index);
+pub fn initBefore(ctx: *Context, function: *Function, block: BasicBlock.Index, instruction_index: Value.Index) Self {
+    var res: Self = .{
+        .ctx = ctx,
+        .function = function,
+        .block = block,
+        .insertion_point = undefined,
+    };
+    res.positionBefore(function, block, instruction_index);
     return res;
 }
 
-pub fn positionAtStart(self: *Self, instruction_list: *ValueList) void {
-    self.instruction_list = instruction_list;
-    self.insertion_point = instruction_list.first;
+pub fn positionAtStart(self: *Self, function: *Function, block: BasicBlock.Index) void {
+    self.function = function;
+    self.block = block;
+    self.insertion_point = function.blocks.items[@backingInt(block)].instructions.first;
 }
 
-pub fn positionAtEnd(self: *Self, instruction_list: *ValueList) void {
-    self.instruction_list = instruction_list;
-    self.insertion_point = instruction_list.last;
+pub fn positionAtEnd(self: *Self, function: *Function, block: BasicBlock.Index) void {
+    self.function = function;
+    self.block = block;
+    self.insertion_point = function.blocks.items[@backingInt(block)].instructions.last;
 }
 
-pub fn positionAfter(self: *Self, instruction_list: *ValueList, instruction_index: Value.Index) void {
-    self.instruction_list = instruction_list;
+pub fn positionAfter(self: *Self, function: *Function, block: BasicBlock.Index, instruction_index: Value.Index) void {
+    self.function = function;
+    self.block = block;
     self.insertion_point = instruction_index.toIndexOpt();
 }
 
-pub fn positionBefore(self: *Self, instruction_list: *ValueList, instruction_index: Value.Index) void {
-    self.instruction_list = instruction_list;
-    self.insertion_point = self.ctx.values.items(.prev)[@backingInt(instruction_index)];
+pub fn positionBefore(self: *Self, function: *Function, block: BasicBlock.Index, instruction_index: Value.Index) void {
+    self.function = function;
+    self.block = block;
+    self.insertion_point = self.ctx.values.items(.prev)[instruction_index.toU32()];
 }
 
 fn createAndInsert(self: *Self, value: Value) !Value.Index {
-    const idx = try self.ctx.createValue(value);
-    self.insert(idx);
-    return idx;
+    return self.insert(try self.ctx.createValue(value));
 }
 
 fn getValueType(self: Self, idx: Value.Index) Type {
-    return self.ctx.values.items(.ty)[@backingInt(idx)];
+    return self.ctx.values.items(.ty)[idx.toU32()];
 }
 
-fn insert(self: *Self, idx: Value.Index) void {
+pub fn insert(self: *Self, idx: Value.Index) Value.Index {
     const nodes = self.ctx.values.slice();
-    if (self.insertion_point.toIndex()) |after| {
-        self.instruction_list.insertAfter(nodes, after, idx);
-    } else {
-        self.instruction_list.prepend(nodes, idx);
+    const kind = nodes.items(.kind)[idx.toU32()];
+    if (kind.isInstruction()) {
+        const instruction_list = &self.function.blocks.items[@backingInt(self.block)].instructions;
+        if (self.insertion_point.toIndex()) |after| {
+            instruction_list.insertAfter(nodes, after, idx);
+        } else {
+            instruction_list.prepend(nodes, idx);
+        }
+        self.insertion_point = idx.toIndexOpt();
     }
+
+    return idx;
 }
 
 pub fn createBlockArgument(self: *Self, ty: Type) !Value.Index {
-    return self.ctx.createValue(.{ .kind = .stack_slot, .ty = ty, .prev = .none, .next = .none });
+    const res = try self.ctx.createValue(.{ .kind = .block_argument, .ty = ty, .prev = .none, .next = .none });
+    self.function.blocks.items[@backingInt(self.block)].arguments.append(self.ctx.values.slice(), res);
+    return res;
 }
 
-pub fn createStackSlot(self: *Self, ty: Type) !Value.Index {
+pub fn newStackSlot(self: *Self, ty: Type) !Value.Index {
     return self.ctx.createValue(.{ .kind = .stack_slot, .ty = ty });
 }
 
-pub fn createConstantInt(self: *Self, ty: Type, value: u64) !Value.Index {
-    return self.ctx.createValue(.{
-        .kind = .constant,
-        .ty = ty,
-        .data = .{ .constant = value },
-    });
+pub fn newConstantInt(self: *Self, ty: Type, value: u64) !Value.Index {
+    return self.ctx.createValue(.{ .kind = .constant, .ty = ty, .data = .{ .constant = value } });
 }
 
 pub fn createTruncate(self: *Self, value: Value.Index, to: Type) !Value.Index {
@@ -284,10 +315,73 @@ pub fn createBr(
     });
 }
 
-pub fn createRet(self: *Self, value: Value.IndexOpt) !Value.Index {
+pub fn createRet(self: *Self, value: Value.Index) !Value.Index {
     return self.createAndInsert(.{
         .kind = .ret,
-        .ty = .unit,
-        .data = .{ .unary_opt = value },
+        .ty = .{ .kind = .unit },
+        .data = .{ .unary_opt = value.toIndexOpt() },
     });
+}
+
+pub fn createRetVoid(self: *Self) !Value.Index {
+    return self.createAndInsert(.{
+        .kind = .ret,
+        .ty = .{ .kind = .unit },
+        .data = .{ .unary_opt = .none },
+    });
+}
+
+test "basic usage" {
+    const ir = @import("ir.zig");
+    const gpa = std.testing.allocator;
+
+    var ctx: ir.Context = .init(gpa);
+    defer ctx.deinit();
+
+    var function: ir.Function = .empty;
+    defer function.deinit(ctx);
+
+    const entry_block_idx = try function.addBlock(ctx, .empty);
+
+    var builder: ir.Builder = .initAtStart(&ctx, &function, entry_block_idx);
+
+    const int32: ir.Type = .{ .kind = .int32 };
+
+    const a = try builder.createBlockArgument(int32);
+    const b = try builder.createBlockArgument(int32);
+    const add = try builder.createAdd(a, b);
+
+    const const2 = try builder.newConstantInt(int32, 2);
+    const udiv = try builder.createDivUnsigned(add, const2);
+    _ = try builder.createRet(udiv);
+
+    const expected_instructions: []const ir.Value = &.{
+        .{ .kind = .add, .ty = int32, .data = .{ .binary = .{ .lhs = a, .rhs = b } } },
+        .{ .kind = .udiv, .ty = int32, .data = .{ .binary = .{ .lhs = add, .rhs = const2 } } },
+        .{ .kind = .ret, .ty = .{ .kind = .unit }, .data = .{ .unary_opt = udiv.toIndexOpt() } },
+    };
+
+    var actual_inst_idx = function.blocks.items[@backingInt(entry_block_idx)].instructions.first;
+    for (expected_instructions, 0..) |expected, i| {
+        if (actual_inst_idx.toU32()) |inst_index| {
+            const actual = ctx.values.get(inst_index);
+
+            try std.testing.expectEqual(expected.kind, actual.kind);
+            try std.testing.expectEqual(expected.ty, actual.ty);
+
+            switch (actual.kind) {
+                .add, .udiv => try std.testing.expectEqualDeep(expected.data.binary, actual.data.binary),
+                .ret => try std.testing.expectEqual(expected.data.unary_opt, actual.data.unary_opt),
+                else => unreachable,
+            }
+
+            actual_inst_idx = actual.next;
+        } else {
+            std.testing.failPrint(
+                "actual function body is shorter than expected: {d} < {d}",
+                .{ i, expected_instructions.len },
+            );
+            return;
+        }
+    }
 }

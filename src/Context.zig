@@ -41,8 +41,8 @@ pub fn storeName(self: *Self, name: []const u8) ![]const u8 {
 }
 
 pub fn createValue(self: *Self, value: Value) !Value.Index {
-    const res = self.instruction_storage.len;
-    try self.instruction_storage.append(self.gpa, value);
+    const res = self.values.len;
+    try self.values.append(self.gpa, value);
     return @fromBackingInt(@intCast(res));
 }
 
