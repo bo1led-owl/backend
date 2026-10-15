@@ -208,8 +208,16 @@ pub fn createStackLoad(self: *Self, slot: Value.Index) !Value.Index {
 pub fn createStackStore(self: *Self, slot: Value.Index, value: Value.Index) !Value.Index {
     return self.createAndInsert(.{
         .kind = .stack_store,
-        .ty = .unit,
+        .ty = .{ .kind = .unit },
         .data = .{ .store = .{ .dest = slot, .src = value } },
+    });
+}
+
+pub fn createStackAddress(self: *Self, slot: Value.Index) !Value.Index {
+    return self.createAndInsert(.{
+        .kind = .stack_address,
+        .ty = .{ .kind = .ptr },
+        .data = .{ .unary = slot },
     });
 }
 
@@ -224,7 +232,7 @@ pub fn createLoad(self: *Self, ty: Type, from: Value.Index) !Value.Index {
 pub fn createStore(self: *Self, dest: Value.Index, src: Value.Index) !Value.Index {
     return self.createAndInsert(.{
         .kind = .store,
-        .ty = .unit,
+        .ty = .{ .kind = .unit },
         .data = .{ .store = .{ .dest = dest, .src = src } },
     });
 }
@@ -268,7 +276,7 @@ pub fn createBr(
 
     return self.createAndInsert(.{
         .kind = .br,
-        .ty = .unit,
+        .ty = .{ .kind = .unit },
         .data = .{ .br = .{
             .cond = cond,
             .extras_begin = @fromBackingInt(@intCast(prev_extras_len)),

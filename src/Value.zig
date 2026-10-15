@@ -43,7 +43,7 @@ pub const Kind = enum(u8) {
     /// truncation instruction
     /// `data` is `unary`
     truncate,
-    /// singed extend instruction
+    /// sign extend instruction
     /// `data` is `unary`
     sign_extend,
     /// zero extend instruction
