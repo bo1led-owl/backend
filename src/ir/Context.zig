@@ -8,9 +8,15 @@ gpa: std.mem.Allocator,
 arena: std.heap.ArenaAllocator,
 values: std.MultiArrayList(Value),
 extras: std.ArrayList(u32),
-functions: std.StringHashMapUnmanaged(Function),
+functions: std.StringArrayHashMapUnmanaged(Function),
 
-pub const ExtraIndex = enum(u32) { _ };
+pub const ExtraIndex = enum(u32) {
+    _,
+
+    pub fn toU32(self: ExtraIndex) u32 {
+        return @backingInt(self);
+    }
+};
 pub const ExtraRange = struct { begin: ExtraIndex, len: u32 };
 
 pub fn init(gpa: std.mem.Allocator) Self {
@@ -24,14 +30,20 @@ pub fn init(gpa: std.mem.Allocator) Self {
 }
 
 pub fn deinit(self: *Self) void {
-    self.values.deinit(self.gpa);
     self.arena.deinit();
+    self.values.deinit(self.gpa);
     self.extras.deinit(self.gpa);
+
+    for (self.functions.values()) |*f| {
+        f.deinit(self);
+    }
+    self.functions.deinit(self.gpa);
+
     self.* = undefined;
 }
 
 pub fn getExtras(self: Self, range: ExtraRange) []u32 {
-    return self.extras.items[@backingInt(range.begin)..][0..range.len];
+    return self.extras.items[range.begin.toU32()..][0..range.len];
 }
 
 pub fn storeName(self: *Self, name: []const u8) ![]const u8 {
@@ -48,4 +60,16 @@ pub fn createValue(self: *Self, value: Value) !Value.Index {
 
 pub fn reserveExtras(self: *Self, new_items: usize) !void {
     try self.extras.ensureTotalCapacity(self.gpa, self.extras.items.len + new_items);
+}
+
+pub const CreateFunctionError = std.mem.Allocator.Error || error{AlreadyExists};
+pub fn createFunction(self: *Self, name: []const u8) CreateFunctionError!Function.Index {
+    if (self.functions.contains(name)) {
+        return CreateFunctionError.AlreadyExists;
+    }
+
+    const stored_name = try self.storeName(name);
+    const res = self.functions.values().len;
+    try self.functions.put(self.gpa, stored_name, .empty);
+    return @fromBackingInt(@intCast(res));
 }

@@ -1,4 +1,4 @@
-const Self = @This();
+const ValueList = @This();
 
 const std = @import("std");
 const Value = @import("Value.zig");
@@ -9,12 +9,40 @@ const IndexOpt = Value.IndexOpt;
 first: IndexOpt,
 last: IndexOpt,
 
-pub const empty: Self = .{ .first = .none, .last = .none };
+pub const empty: ValueList = .{ .first = .none, .last = .none };
 
-pub fn prepend(self: *Self, nodes: std.MultiArrayList(Value).Slice, node_index: Index) void {
-    nodes.items(.next)[@backingInt(node_index)] = self.first;
+pub const Iterator = struct {
+    nodes: std.MultiArrayList(Value).Slice,
+    cur: IndexOpt,
+
+    pub fn next(self: *Iterator) ?Index {
+        const res = self.cur.toIndex() orelse return null;
+        self.cur = self.nodes.items(.next)[res.toU32()];
+        return res;
+    }
+};
+
+pub fn iterator(self: ValueList, nodes: std.MultiArrayList(Value).Slice) Iterator {
+    return .{ .nodes = nodes, .cur = self.first };
+}
+
+pub fn isEmpty(self: ValueList) bool {
+    return self.first == .none;
+}
+
+pub fn len(self: ValueList, nodes: std.MultiArrayList(Value).Slice) u32 {
+    var iter = self.iterator(nodes);
+    var res: u32 = 0;
+    while (iter.next() != null) {
+        res += 1;
+    }
+    return res;
+}
+
+pub fn prepend(self: *ValueList, nodes: std.MultiArrayList(Value).Slice, node_index: Index) void {
+    nodes.items(.next)[node_index.toU32()] = self.first;
     if (self.first.toIndex()) |first| {
-        nodes.items(.prev)[@backingInt(first)] = node_index.toIndexOpt();
+        nodes.items(.prev)[first.toU32()] = node_index.toIndexOpt();
     }
 
     self.first = node_index.toIndexOpt();
@@ -23,7 +51,7 @@ pub fn prepend(self: *Self, nodes: std.MultiArrayList(Value).Slice, node_index: 
     }
 }
 
-pub fn append(self: *Self, nodes: std.MultiArrayList(Value).Slice, node_index: Index) void {
+pub fn append(self: *ValueList, nodes: std.MultiArrayList(Value).Slice, node_index: Index) void {
     nodes.items(.prev)[node_index.toU32()] = self.last;
     if (self.last.toU32()) |last| {
         nodes.items(.next)[last] = node_index.toIndexOpt();
@@ -35,7 +63,7 @@ pub fn append(self: *Self, nodes: std.MultiArrayList(Value).Slice, node_index: I
     }
 }
 
-pub fn insertBefore(self: *Self, nodes: std.MultiArrayList(Value).Slice, existing_node: Index, new_node: Index) void {
+pub fn insertBefore(self: *ValueList, nodes: std.MultiArrayList(Value).Slice, existing_node: Index, new_node: Index) void {
     if (existing_node == self.first.toIndex().?) {
         self.prepend(nodes, new_node);
     } else {
@@ -49,7 +77,7 @@ pub fn insertBefore(self: *Self, nodes: std.MultiArrayList(Value).Slice, existin
     }
 }
 
-pub fn insertAfter(self: *Self, nodes: std.MultiArrayList(Value).Slice, existing_node: Index, new_node: Index) void {
+pub fn insertAfter(self: *ValueList, nodes: std.MultiArrayList(Value).Slice, existing_node: Index, new_node: Index) void {
     if (existing_node == self.last.toIndex().?) {
         self.append(nodes, new_node);
     } else {
@@ -63,7 +91,7 @@ pub fn insertAfter(self: *Self, nodes: std.MultiArrayList(Value).Slice, existing
     }
 }
 
-pub fn popFirst(self: *Self, nodes: std.MultiArrayList(Value).Slice) Index {
+pub fn popFirst(self: *ValueList, nodes: std.MultiArrayList(Value).Slice) Index {
     const next = nodes.items(.next)[self.first.toU32().?];
     nodes.items(.prev)[next] = .none;
     nodes.items(.next)[self.first] = .none;
@@ -71,7 +99,7 @@ pub fn popFirst(self: *Self, nodes: std.MultiArrayList(Value).Slice) Index {
     return self.first;
 }
 
-pub fn popLast(self: *Self, nodes: std.MultiArrayList(Value).Slice) Index {
+pub fn popLast(self: *ValueList, nodes: std.MultiArrayList(Value).Slice) Index {
     const prev = nodes.items(.prev)[self.last.toU32().?];
     nodes.items(.next)[prev] = .none;
     nodes.items(.prev)[self.last] = .none;
@@ -79,7 +107,7 @@ pub fn popLast(self: *Self, nodes: std.MultiArrayList(Value).Slice) Index {
     return self.last;
 }
 
-pub fn remove(self: *Self, nodes: std.MultiArrayList(Value).Slice, node: Index) void {
+pub fn remove(self: *ValueList, nodes: std.MultiArrayList(Value).Slice, node: Index) void {
     if (node == self.first) {
         _ = self.popFirst(nodes);
     } else if (node == self.last) {

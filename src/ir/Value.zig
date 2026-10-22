@@ -4,6 +4,7 @@ const std = @import("std");
 const Context = @import("Context.zig");
 const BasicBlock = @import("BasicBlock.zig");
 const Type = @import("types.zig").Type;
+const Function = @import("Function.zig");
 
 pub const Index = enum(u32) {
     _,
@@ -14,7 +15,7 @@ pub const Index = enum(u32) {
 
     pub fn toIndexOpt(self: Value.Index) Value.IndexOpt {
         std.debug.assert(@backingInt(self) != @backingInt(IndexOpt.none));
-        return @fromBackingInt(@intCast(@backingInt(self)));
+        return @fromBackingInt(@backingInt(self));
     }
 };
 
@@ -40,8 +41,8 @@ pub const IndexOpt = enum(u32) {
 kind: Kind,
 ty: Type,
 data: Data = undefined,
-prev: Value.IndexOpt = undefined,
-next: Value.IndexOpt = undefined,
+prev: Value.IndexOpt = .none,
+next: Value.IndexOpt = .none,
 
 pub const Kind = enum(u8) {
     /// reference to a block argument
@@ -184,4 +185,61 @@ pub const Data = union {
         cond: Value.Index,
         extras_begin: Context.ExtraIndex,
     },
+};
+
+pub const info = struct {
+    pub const Jump = struct {
+        dest: BasicBlock.Index,
+        args: []const Value.Index,
+    };
+
+    pub const Br = struct {
+        cond: Value.Index,
+        on_true: Jump,
+        on_false: Jump,
+    };
+
+    pub fn jump(ctx: Context, function: Function, value: Value.Index) Jump {
+        std.debug.assert(ctx.values.items(.kind)[value.toU32()] == .jump);
+
+        const data = ctx.values.items(.data)[value.toU32()].jump;
+        const dest = data.dest;
+        const args: []const Value.Index = @ptrCast(ctx.getExtras(.{
+            .begin = data.first_arg,
+            .len = function.blocks.items[dest.toU32()].arguments.len(ctx.values.slice()),
+        }));
+
+        return .{ .dest = dest, .args = args };
+    }
+
+    pub fn br(ctx: Context, function: Function, value: Value.Index) Br {
+        std.debug.assert(ctx.values.items(.kind)[value.toU32()] == .br);
+
+        const data = ctx.values.items(.data)[value.toU32()].br;
+
+        const on_true_dest: BasicBlock.Index = @fromBackingInt(ctx.extras.items[data.extras_begin.toU32()]);
+        const on_true_n_args = function.blocks.items[on_true_dest.toU32()].arguments.len(ctx.values.slice());
+        const on_true_args: []const Value.Index = @ptrCast(ctx.getExtras(.{
+            .begin = @fromBackingInt(data.extras_begin.toU32() + 1),
+            .len = on_true_n_args,
+        }));
+        const on_false_dest: BasicBlock.Index =
+            @fromBackingInt(ctx.extras.items[data.extras_begin.toU32() + on_true_n_args + 1]);
+        const on_false_args: []const Value.Index = @ptrCast(ctx.getExtras(.{
+            .begin = @fromBackingInt(data.extras_begin.toU32() + on_true_n_args + 2),
+            .len = function.blocks.items[on_false_dest.toU32()].arguments.len(ctx.values.slice()),
+        }));
+
+        return .{
+            .cond = data.cond,
+            .on_true = .{
+                .dest = on_true_dest,
+                .args = on_true_args,
+            },
+            .on_false = .{
+                .dest = on_false_dest,
+                .args = on_false_args,
+            },
+        };
+    }
 };
