@@ -30,6 +30,16 @@ pub fn isEmpty(self: ValueList) bool {
     return self.first == .none;
 }
 
+pub fn contains(self: ValueList, nodes: std.MultiArrayList(Value).Slice, value: Value.Index) bool {
+    var iter = self.iterator(nodes);
+    while (iter.next()) |v| {
+        if (v == value) {
+            return true;
+        }
+    }
+    return false;
+}
+
 pub fn len(self: ValueList, nodes: std.MultiArrayList(Value).Slice) u32 {
     var iter = self.iterator(nodes);
     var res: u32 = 0;

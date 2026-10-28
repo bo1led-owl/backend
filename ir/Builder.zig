@@ -1,3 +1,18 @@
+//! IR builder
+//!
+//! General conventions:
+//!
+//!
+//! `create*` methods create a new value and add it to the appropriate container.
+//! For example:
+//! `createStackSlot` creates a slot and appends it to the slot of the function.
+//! `createAdd` creates an addition and puts it at the insertion point of the builder, advancing the insertion point.
+//!
+//! `new*` methods create a new value and only store it in context.
+//! For example:
+//! `newBasicBlock` creates an empty basic block and nothing more.
+//! `newConstantInt` creates an constant and stores it in context, not adding it anywhere.
+
 const Builder = @This();
 
 const std = @import("std");
@@ -8,98 +23,101 @@ const Function = @import("Function.zig");
 const BasicBlock = @import("BasicBlock.zig");
 const ValueList = @import("ValueList.zig");
 
-/// current IR context
+/// Current IR context
 ctx: *Context,
 
-/// function being operated on
-function: Function.Index,
-
-/// basic block being operated on
+/// Basic block being operated on.
+/// This field may be read freely, but writes should only be done using `positionAt*` methods
 block: BasicBlock.Index,
 
-/// index of instruction AFTER which new instructions are inserted
+/// Index of instruction AFTER which new instructions are inserted
 /// `.none` means prepending an instruction
 insertion_point: Value.IndexOpt,
 
-pub fn initWithNewFunction(ctx: *Context, function_name: []const u8) !Builder {
-    const function = try ctx.createFunction(function_name);
+/// Create a function with a single empty block and a builder, setting builder's insertion point at the block
+pub fn initWithNewFunction(ctx: *Context, function_name: []const u8) !struct { Builder, Function.Index } {
+    const function = try ctx.createFunctionWithOneBlock(function_name);
+    const entry = ctx.functions.values()[function.toU32()].entry_block;
+
+    return .{ initAtEnd(ctx, entry), function };
+}
+
+/// Create builder with insertion point before the first instruction of `block`
+pub fn initAtStart(ctx: *Context, block: BasicBlock.Index) Builder {
     var res: Builder = .{
         .ctx = ctx,
-        .function = function,
         .block = undefined,
         .insertion_point = undefined,
     };
-    res.block = try res.createBasicBlock();
-    res.positionAtEnd(res.function, res.block);
+    res.positionAtStart(block);
     return res;
 }
 
-pub fn initAtStart(ctx: *Context, function: Function.Index, block: BasicBlock.Index) Builder {
+/// Create builder with insertion point after the last instruction of `block`
+pub fn initAtEnd(ctx: *Context, block: BasicBlock.Index) Builder {
     var res: Builder = .{
         .ctx = ctx,
-        .function = undefined,
         .block = undefined,
         .insertion_point = undefined,
     };
-    res.positionAtStart(function, block);
+    res.positionAtEnd(block);
     return res;
 }
 
-pub fn initAtEnd(ctx: *Context, function: Function.Index, block: BasicBlock.Index) Builder {
+/// Create builder with insertion point after `instruction`.
+/// `instruction` must be inside `block`
+pub fn initAfter(ctx: *Context, block: BasicBlock.Index, instruction: Value.Index) Builder {
     var res: Builder = .{
         .ctx = ctx,
-        .function = undefined,
         .block = undefined,
         .insertion_point = undefined,
     };
-    res.positionAtEnd(function, block);
+    res.positionAfter(block, instruction);
     return res;
 }
 
-pub fn initAfter(ctx: *Context, function: Function.Index, block: BasicBlock.Index, instruction: Value.Index) Builder {
+/// Create builder with insertion point before `instruction`.
+/// `instruction` must be inside `block`
+pub fn initBefore(ctx: *Context, block: BasicBlock.Index, instruction: Value.Index) Builder {
     var res: Builder = .{
         .ctx = ctx,
-        .function = function,
-        .block = block,
+        .block = undefined,
         .insertion_point = undefined,
     };
-    res.positionAfter(function, block, instruction);
+    res.positionBefore(block, instruction);
     return res;
 }
 
-pub fn initBefore(ctx: *Context, function: Function.Index, block: BasicBlock.Index, instruction: Value.Index) Builder {
-    var res: Builder = .{
-        .ctx = ctx,
-        .function = function,
-        .block = block,
-        .insertion_point = undefined,
-    };
-    res.positionBefore(function, block, instruction);
-    return res;
-}
-
-pub fn positionAtStart(self: *Builder, function: Function.Index, block: BasicBlock.Index) void {
-    self.function = function;
+/// Set insertion point before the first instruction of `block`
+pub fn positionAtStart(self: *Builder, block: BasicBlock.Index) void {
     self.block = block;
     self.insertion_point = self.getBlockPtr().instructions.first;
 }
 
-pub fn positionAtEnd(self: *Builder, function: Function.Index, block: BasicBlock.Index) void {
-    self.function = function;
+/// Set insertion point after the last instruction of `block`
+pub fn positionAtEnd(self: *Builder, block: BasicBlock.Index) void {
     self.block = block;
     self.insertion_point = self.getBlockPtr().instructions.last;
 }
 
-pub fn positionAfter(self: *Builder, function: Function.Index, block: BasicBlock.Index, instruction_index: Value.Index) void {
-    self.function = function;
+/// Set insertion point after `instruction`.
+/// `instruction` must be inside `block`
+pub fn positionAfter(self: *Builder, block: BasicBlock.Index, instruction: Value.Index) void {
     self.block = block;
-    self.insertion_point = instruction_index.toIndexOpt();
+
+    std.debug.assert(self.getBlockPtr().instructions.contains(self.ctx.values.slice(), instruction));
+
+    self.insertion_point = instruction.toIndexOpt();
 }
 
-pub fn positionBefore(self: *Builder, function: Function.Index, block: BasicBlock.Index, instruction_index: Value.Index) void {
-    self.function = function;
+/// Set insertion point before `instruction`.
+/// `instruction` must be inside `block`
+pub fn positionBefore(self: *Builder, block: BasicBlock.Index, instruction: Value.Index) void {
     self.block = block;
-    self.insertion_point = self.ctx.values.items(.prev)[instruction_index.toU32()];
+
+    std.debug.assert(self.getBlockPtr().instructions.contains(self.ctx.values.slice(), instruction));
+
+    self.insertion_point = self.ctx.values.items(.prev)[instruction.toU32()];
 }
 
 fn createAndInsert(self: *Builder, value: Value) !Value.Index {
@@ -110,44 +128,42 @@ fn getValueType(self: Builder, idx: Value.Index) Type {
     return self.ctx.values.items(.ty)[idx.toU32()];
 }
 
-fn getFunctionPtr(self: Builder) *Function {
-    return &self.ctx.functions.values()[self.function.toU32()];
-}
-
 fn getBlockPtr(self: Builder) *BasicBlock {
-    return &self.getFunctionPtr().blocks.items[self.block.toU32()];
+    return &self.ctx.blocks.items[self.block.toU32()];
 }
 
-pub fn insert(self: *Builder, idx: Value.Index) Value.Index {
+fn insert(self: *Builder, value: Value.Index) Value.Index {
     const nodes = self.ctx.values.slice();
-    const kind = nodes.items(.kind)[idx.toU32()];
+    const kind = nodes.items(.kind)[value.toU32()];
+
     if (kind.isInstruction()) {
         const instruction_list = &self.getBlockPtr().instructions;
         if (self.insertion_point.toIndex()) |after| {
-            instruction_list.insertAfter(nodes, after, idx);
+            instruction_list.insertAfter(nodes, after, value);
         } else {
-            instruction_list.prepend(nodes, idx);
+            instruction_list.prepend(nodes, value);
         }
-        self.insertion_point = idx.toIndexOpt();
+        self.insertion_point = value.toIndexOpt();
     }
 
-    return idx;
+    return value;
 }
 
-pub fn createBasicBlock(self: *Builder) !BasicBlock.Index {
-    return self.getFunctionPtr().addBlock(self.ctx, .empty);
+pub fn newBasicBlock(self: *Builder) !BasicBlock.Index {
+    return self.ctx.createBasicBlock(.empty);
 }
 
 pub fn createBlockArgument(self: *Builder, ty: Type) !Value.Index {
-    const res = try self.ctx.createValue(.{ .kind = .block_argument, .ty = ty, .prev = .none, .next = .none });
+    const res = try self.ctx.createValue(.{ .kind = .block_argument, .ty = ty });
     const arguments = &self.getBlockPtr().arguments;
     arguments.append(self.ctx.values.slice(), res);
     return res;
 }
 
-pub fn createStackSlot(self: *Builder, ty: Type) !Value.Index {
+pub fn createStackSlot(self: *Builder, in: Function.Index, ty: Type) !Value.Index {
     const res = try self.ctx.createValue(.{ .kind = .stack_slot, .ty = ty });
-    self.getFunctionPtr().stack_slots.append(self.ctx.values.slice(), res);
+    const function: *Function = &self.ctx.functions.values()[in.toU32()];
+    function.stack_slots.append(self.ctx.values.slice(), res);
     return res;
 }
 
@@ -365,12 +381,8 @@ test "basic usage" {
     var ctx: Context = .init(gpa);
     defer ctx.deinit();
 
-    var function: Function = .empty;
-    defer function.deinit(ctx);
-
-    const entry_block_idx = try function.addBlock(ctx, .empty);
-
-    var builder: Builder = .initAtStart(&ctx, &function, entry_block_idx);
+    var builder, _ = try Builder.initWithNewFunction(&ctx, "main");
+    const entry_block_idx = builder.block;
 
     const int32: Type = .{ .kind = .int32 };
 
@@ -406,7 +418,7 @@ test "basic usage" {
         },
     };
 
-    var actual_inst_idx = function.blocks.items[entry_block_idx.toU32()].instructions.first;
+    var actual_inst_idx = ctx.blocks.items[entry_block_idx.toU32()].instructions.first;
     for (expected_instructions, 0..) |expected, i| {
         if (actual_inst_idx.toU32()) |inst_index| {
             const actual = ctx.values.get(inst_index);
