@@ -1,45 +1,19 @@
 const Value = @This();
 
 const std = @import("std");
+const support = @import("support");
 const Context = @import("Context.zig");
 const BasicBlock = @import("BasicBlock.zig");
-const Type = @import("types.zig").Type;
+const TypeHandle = @import("types.zig").TypeHandle;
 const Function = @import("Function.zig");
 
-pub const Index = enum(u32) {
-    _,
+pub const Index = support.indexAndIndexOpt(Value, u32).@"0";
+pub const IndexOpt = support.indexAndIndexOpt(Value, u32).@"1";
 
-    pub fn toU32(self: Value.Index) u32 {
-        return @backingInt(self);
-    }
-
-    pub fn toIndexOpt(self: Value.Index) Value.IndexOpt {
-        std.debug.assert(@backingInt(self) != @backingInt(IndexOpt.none));
-        return @fromBackingInt(@backingInt(self));
-    }
-};
-
-pub const IndexOpt = enum(u32) {
-    none = std.math.maxInt(u32),
-    _,
-
-    pub fn toU32(self: Value.IndexOpt) ?u32 {
-        if (self == .none) {
-            return null;
-        }
-        return @backingInt(self);
-    }
-
-    pub fn toIndex(self: Value.IndexOpt) ?Value.Index {
-        if (self == .none) {
-            return null;
-        }
-        return @fromBackingInt(@backingInt(self));
-    }
-};
+pub const List = @import("list.zig").List(Value, Index, IndexOpt);
 
 kind: Kind,
-ty: Type,
+ty: TypeHandle,
 data: Data = undefined,
 prev: Value.IndexOpt = .none,
 next: Value.IndexOpt = .none,
@@ -48,10 +22,14 @@ pub const Kind = enum(u8) {
     /// reference to a block argument
     block_argument,
     /// a dedicated stack slot
+    /// TODO: untyped?
     stack_slot,
     /// integer constant
     /// `data` is `constant`
     constant,
+    /// a function reference
+    /// `data` is `function`
+    function_ref,
     /// truncation instruction
     /// `data` is `unary`
     truncate,
@@ -124,6 +102,9 @@ pub const Kind = enum(u8) {
     /// store instruction
     /// `data` is `store`
     store,
+    /// call instruction
+    /// `data` is `call`
+    call,
     /// jump instruction
     /// `data` is `jump`
     jump,
@@ -163,14 +144,16 @@ pub const Kind = enum(u8) {
             .jump,
             .br,
             .ret,
+            .call,
             => true,
-            .block_argument, .stack_slot, .constant => false,
+            .function_ref, .block_argument, .stack_slot, .constant => false,
         };
     }
 };
 
 pub const Data = union {
     constant: u64,
+    function: Function.Index,
     unary: Value.Index,
     unary_opt: Value.IndexOpt,
     binary: struct { lhs: Value.Index, rhs: Value.Index },
@@ -184,6 +167,11 @@ pub const Data = union {
         // extras format: [dest_true, args_true..., dest_false, args_false...]
         cond: Value.Index,
         extras_begin: Context.ExtraIndex,
+    },
+    call: struct {
+        // extras format: [args...]
+        callee: Value.Index,
+        first_arg: Context.ExtraIndex,
     },
 };
 
@@ -199,35 +187,40 @@ pub const info = struct {
         on_false: Jump,
     };
 
-    pub fn jump(ctx: Context, function: Function, value: Value.Index) Jump {
-        std.debug.assert(ctx.values.items(.kind)[value.toU32()] == .jump);
+    pub const Call = struct {
+        callee: Value.Index,
+        args: []const Value.Index,
+    };
 
-        const data = ctx.values.items(.data)[value.toU32()].jump;
+    pub fn jump(ctx: Context, value: Value.Index) Jump {
+        std.debug.assert(ctx.values.items(.kind)[value.toInt()] == .jump);
+
+        const data = ctx.values.items(.data)[value.toInt()].jump;
         const dest = data.dest;
         const args: []const Value.Index = @ptrCast(ctx.getExtras(.{
             .begin = data.first_arg,
-            .len = function.blocks.items[dest.toU32()].arguments.len(ctx.values.slice()),
+            .len = ctx.blocks.items(.arguments)[dest.toInt()].len(ctx.values.slice()),
         }));
 
         return .{ .dest = dest, .args = args };
     }
 
-    pub fn br(ctx: Context, function: Function, value: Value.Index) Br {
-        std.debug.assert(ctx.values.items(.kind)[value.toU32()] == .br);
+    pub fn br(ctx: Context, value: Value.Index) Br {
+        std.debug.assert(ctx.values.items(.kind)[value.toInt()] == .br);
 
-        const data = ctx.values.items(.data)[value.toU32()].br;
+        const data = ctx.values.items(.data)[value.toInt()].br;
 
-        const on_true_dest: BasicBlock.Index = @fromBackingInt(ctx.extras.items[data.extras_begin.toU32()]);
-        const on_true_n_args = function.blocks.items[on_true_dest.toU32()].arguments.len(ctx.values.slice());
+        const on_true_dest: BasicBlock.Index = @fromBackingInt(ctx.extras.items[data.extras_begin.toInt()]);
+        const on_true_n_args = ctx.blocks.items(.arguments)[on_true_dest.toInt()].len(ctx.values.slice());
         const on_true_args: []const Value.Index = @ptrCast(ctx.getExtras(.{
-            .begin = @fromBackingInt(data.extras_begin.toU32() + 1),
+            .begin = @fromBackingInt(data.extras_begin.toInt() + 1),
             .len = on_true_n_args,
         }));
         const on_false_dest: BasicBlock.Index =
-            @fromBackingInt(ctx.extras.items[data.extras_begin.toU32() + on_true_n_args + 1]);
+            @fromBackingInt(ctx.extras.items[data.extras_begin.toInt() + on_true_n_args + 1]);
         const on_false_args: []const Value.Index = @ptrCast(ctx.getExtras(.{
-            .begin = @fromBackingInt(data.extras_begin.toU32() + on_true_n_args + 2),
-            .len = function.blocks.items[on_false_dest.toU32()].arguments.len(ctx.values.slice()),
+            .begin = @fromBackingInt(data.extras_begin.toInt() + on_true_n_args + 2),
+            .len = ctx.blocks.items(.arguments)[on_false_dest.toInt()].len(ctx.values.slice()),
         }));
 
         return .{
@@ -241,5 +234,20 @@ pub const info = struct {
                 .args = on_false_args,
             },
         };
+    }
+
+    pub fn call(ctx: Context, value: Value.Index) Call {
+        std.debug.assert(ctx.values.items(.kind)[value.toInt()] == .call);
+
+        const data = ctx.values.items(.data)[value.toInt()].call;
+        const callee_index = data.callee;
+        const callee_type_handle = ctx.values.items(.ty)[callee_index.toInt()];
+        const callee_type = ctx.type_storage.getFullType(callee_type_handle).function;
+        const args: []const Value.Index = @ptrCast(ctx.getExtras(.{
+            .begin = data.first_arg,
+            .len = @intCast(callee_type.params.len),
+        }));
+
+        return .{ .callee = callee_index, .args = args };
     }
 };

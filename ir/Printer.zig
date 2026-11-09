@@ -2,36 +2,59 @@ const Self = @This();
 
 const std = @import("std");
 const Context = @import("Context.zig");
-const Type = @import("types.zig").Type;
+const TypeHandle = @import("types.zig").TypeHandle;
 const Value = @import("Value.zig");
 const Function = @import("Function.zig");
 const BasicBlock = @import("BasicBlock.zig");
-const ValueList = @import("ValueList.zig");
 
 ctx: *const Context,
 writer: *std.Io.Writer,
 depth: u32 = 0,
-cur_block_args: ?*const ValueList = null,
-
-const PAD_SIZE: u32 = 2;
+cur_block_args: ?Value.List = null,
+indentation: u8 = 2,
 
 pub const Error = std.Io.Writer.Error;
 
-pub fn init(ctx: *const Context, writer: *std.Io.Writer) Self {
-    return .{ .ctx = ctx, .writer = writer };
+pub const IndentationOption = union(enum) {
+    default,
+    custom: u8,
+};
+pub fn init(ctx: *const Context, writer: *std.Io.Writer, indent: IndentationOption) Self {
+    return .{
+        .ctx = ctx,
+        .writer = writer,
+        .indentation = switch (indent) {
+            .default => 2,
+            .custom => |n| n,
+        },
+    };
 }
 
-fn pad(self: *Self) !void {
-    try self.writer.splatByteAll(' ', self.depth * PAD_SIZE);
+fn makeIndentation(self: *Self) !void {
+    try self.writer.splatByteAll(' ', self.depth * self.indentation);
 }
 
-pub fn printFunction(self: *Self, function: Function) Error!void {
+pub fn printFunction(self: *Self, name: []const u8, function: Function) Error!void {
+    try self.writer.print("{s}(", .{name});
+
+    const full_type = self.ctx.type_storage.getFullType(function.ty).function;
+    for (full_type.params, 0..) |param_type, i| {
+        if (i != 0) {
+            try self.writer.writeAll(", ");
+        }
+        try self.printType(param_type);
+    }
+    try self.writer.writeAll(") -> ");
+    try self.printType(full_type.rettype);
+    try self.writer.writeAll(" {\n");
+
+    self.depth += 1;
+    defer self.depth -= 1;
+
+    try self.makeIndentation();
     try self.writer.writeAll("stack slots: [");
 
     if (!function.stack_slots.isEmpty()) {
-        self.depth += 1;
-        defer self.depth -= 1;
-
         var iter = function.stack_slots.iterator(self.ctx.values.slice());
         var first = true;
         while (iter.next()) |value_idx| {
@@ -40,15 +63,18 @@ pub fn printFunction(self: *Self, function: Function) Error!void {
             }
             first = false;
 
-            const slot_type = self.ctx.values.items(.ty)[value_idx.toU32()];
-            try self.writer.print("v{d}: ", .{value_idx.toU32()});
+            const slot_type = self.ctx.values.items(.ty)[value_idx.toInt()];
+            try self.writer.print("v{d}: ", .{value_idx.toInt()});
             try self.printType(slot_type);
         }
     }
     try self.writer.writeAll("]\n");
 
-    for (function.blocks.items, 0..) |bb, bb_index| {
-        try self.writer.print("b{d}(", .{bb_index});
+    var block_iter = function.blocks.iterator(self.ctx.blocks.slice());
+    while (block_iter.next()) |bb_index| {
+        try self.makeIndentation();
+        try self.writer.print("b{d}(", .{bb_index.toInt()});
+        const bb = self.ctx.blocks.get(bb_index.toInt());
         {
             var iter = bb.arguments.iterator(self.ctx.values.slice());
             var first = true;
@@ -58,14 +84,14 @@ pub fn printFunction(self: *Self, function: Function) Error!void {
                 }
                 first = false;
 
-                const arg_type = self.ctx.values.items(.ty)[value_idx.toU32()];
-                try self.writer.print("v{d}: ", .{value_idx.toU32()});
+                const arg_type = self.ctx.values.items(.ty)[value_idx.toInt()];
+                try self.writer.print("v{d}: ", .{value_idx.toInt()});
                 try self.printType(arg_type);
             }
             try self.writer.writeAll("):\n");
         }
 
-        self.cur_block_args = &bb.arguments;
+        self.cur_block_args = bb.arguments;
         defer self.cur_block_args = null;
 
         self.depth += 1;
@@ -73,29 +99,39 @@ pub fn printFunction(self: *Self, function: Function) Error!void {
 
         var iter = bb.instructions.iterator(self.ctx.values.slice());
         while (iter.next()) |value_idx| {
-            try self.pad();
-            try self.printInstruction(function, value_idx);
+            try self.makeIndentation();
+            try self.printInstruction(value_idx);
             try self.writer.writeByte('\n');
         }
     }
+
+    try self.writer.writeAll("}\n");
 }
 
 pub fn printOperand(self: *Self, v: Value.Index) Error!void {
-    switch (self.ctx.values.items(.kind)[v.toU32()]) {
-        .constant => try self.writer.print("{d}", .{self.ctx.values.items(.data)[v.toU32()].constant}),
-        else => try self.writer.print("v{d}", .{v.toU32()}),
+    switch (self.ctx.values.items(.kind)[v.toInt()]) {
+        .constant => {
+            const value = self.ctx.values.items(.data)[v.toInt()].constant;
+            try self.writer.print("{d}", .{value});
+        },
+        .function_ref => {
+            const function_index = self.ctx.values.items(.data)[v.toInt()].function;
+            const function_name = self.ctx.functions.keys()[function_index.toInt()];
+            try self.writer.print("{s}", .{function_name});
+        },
+        else => try self.writer.print("v{d}", .{v.toInt()}),
     }
 }
 
-pub fn printInstruction(self: *Self, function: Function, value_index: Value.Index) Error!void {
-    const value_type = self.ctx.values.items(.ty)[value_index.toU32()];
+pub fn printInstruction(self: *Self, value_index: Value.Index) Error!void {
+    const value_type = self.ctx.values.items(.ty)[value_index.toInt()];
     if (value_type.kind != .unit) {
-        try self.writer.print("v{d}: ", .{value_index.toU32()});
+        try self.writer.print("v{d}: ", .{value_index.toInt()});
         try self.printType(value_type);
         try self.writer.writeAll(" = ");
     }
 
-    const value_kind = self.ctx.values.items(.kind)[value_index.toU32()];
+    const value_kind = self.ctx.values.items(.kind)[value_index.toInt()];
 
     const mnemonic =
         switch (value_kind) {
@@ -126,12 +162,13 @@ pub fn printInstruction(self: *Self, function: Function, value_index: Value.Inde
             .jump => "jmp",
             .br => "br",
             .ret => "ret",
-            .block_argument, .stack_slot, .constant => unreachable,
+            .call => "call",
+            .function_ref, .block_argument, .stack_slot, .constant => unreachable,
         };
 
     try self.writer.writeAll(mnemonic);
 
-    const value_data = self.ctx.values.items(.data)[value_index.toU32()];
+    const value_data = self.ctx.values.items(.data)[value_index.toInt()];
     switch (value_kind) {
         .truncate,
         .sign_extend,
@@ -175,8 +212,23 @@ pub fn printInstruction(self: *Self, function: Function, value_index: Value.Inde
             try self.printOperand(operands.src);
         },
         .jump => {
-            const info = Value.info.jump(self.ctx.*, function, value_index);
-            try self.writer.print(" b{d}(", .{info.dest.toU32()});
+            const info = Value.info.jump(self.ctx.*, value_index);
+            try self.writer.print(" b{d}(", .{info.dest.toInt()});
+            for (info.args, 0..) |arg_index, i| {
+                if (i != 0) {
+                    try self.writer.writeAll(", ");
+                }
+                try self.printOperand(arg_index);
+            }
+            try self.writer.writeByte(')');
+        },
+        .call => {
+            const info = Value.info.call(self.ctx.*, value_index);
+
+            try self.writer.writeByte(' ');
+            try self.printOperand(info.callee);
+
+            try self.writer.writeAll(" (");
             for (info.args, 0..) |arg_index, i| {
                 if (i != 0) {
                     try self.writer.writeAll(", ");
@@ -186,17 +238,17 @@ pub fn printInstruction(self: *Self, function: Function, value_index: Value.Inde
             try self.writer.writeByte(')');
         },
         .br => {
-            const info = Value.info.br(self.ctx.*, function, value_index);
+            const info = Value.info.br(self.ctx.*, value_index);
             try self.writer.writeByte(' ');
             try self.printOperand(info.cond);
-            try self.writer.print(" then b{d}(", .{info.on_true.dest.toU32()});
+            try self.writer.print(" then b{d}(", .{info.on_true.dest.toInt()});
             for (info.on_true.args, 0..) |arg_index, i| {
                 if (i != 0) {
                     try self.writer.writeAll(", ");
                 }
                 try self.printOperand(arg_index);
             }
-            try self.writer.print(") else b{d}(", .{info.on_false.dest.toU32()});
+            try self.writer.print(") else b{d}(", .{info.on_false.dest.toInt()});
             for (info.on_false.args, 0..) |arg_index, i| {
                 if (i != 0) {
                     try self.writer.writeAll(", ");
@@ -212,11 +264,11 @@ pub fn printInstruction(self: *Self, function: Function, value_index: Value.Inde
                 try self.printOperand(operand);
             }
         },
-        .block_argument, .stack_slot, .constant => unreachable,
+        .function_ref, .block_argument, .stack_slot, .constant => unreachable,
     }
 }
 
-pub fn printType(self: *Self, ty: Type) Error!void {
+pub fn printType(self: *Self, ty: TypeHandle) Error!void {
     switch (ty.kind) {
         .unit => try self.writer.writeAll("unit"),
         .ptr => try self.writer.writeAll("ptr"),
@@ -225,7 +277,46 @@ pub fn printType(self: *Self, ty: Type) Error!void {
         .int16 => try self.writer.writeAll("int16"),
         .int32 => try self.writer.writeAll("int32"),
         .int64 => try self.writer.writeAll("int64"),
-        .@"struct" => unreachable, // TODO
-        .array => unreachable, // TODO
+        .function => {
+            const full_ty = self.ctx.type_storage.getFullType(ty).function;
+
+            try self.writer.writeByte('(');
+            var first = true;
+            for (full_ty.params) |param| {
+                defer first = false;
+                if (!first) {
+                    try self.writer.writeAll(", ");
+                }
+
+                try self.printType(param);
+            }
+            try self.writer.writeAll(") -> ");
+            try self.printType(full_ty.rettype);
+        },
+        .@"struct" => {
+            const full_ty = self.ctx.type_storage.getFullType(ty).@"struct";
+
+            if (full_ty.fields.len == 0) {
+                try self.writer.writeAll("struct {}");
+                return;
+            }
+
+            try self.writer.writeAll("struct { ");
+            var first = true;
+            for (full_ty.fields) |field| {
+                defer first = false;
+                if (!first) {
+                    try self.writer.writeAll(", ");
+                }
+
+                try self.printType(field);
+            }
+            try self.writer.writeAll(" }");
+        },
+        .array => {
+            const full_ty = self.ctx.type_storage.getFullType(ty).array;
+            try self.writer.print("[{d}]", .{full_ty.size});
+            try self.printType(full_ty.element_type);
+        },
     }
 }

@@ -1,15 +1,14 @@
 const std = @import("std");
 
-const types = @import("types.zig");
-pub const Type = types.Type;
-
+pub const types = @import("types.zig");
 pub const Printer = @import("Printer.zig");
 pub const Context = @import("Context.zig");
 pub const Builder = @import("Builder.zig");
 pub const BasicBlock = @import("BasicBlock.zig");
 pub const Function = @import("Function.zig");
 pub const Value = @import("Value.zig");
-pub const ValueList = @import("ValueList.zig");
+const list = @import("list.zig");
+pub const List = list.List;
 
 // TODO: validation function to run in debug mode
 
@@ -21,5 +20,5 @@ test {
     _ = BasicBlock;
     _ = Function;
     _ = Value;
-    _ = ValueList;
+    _ = list;
 }

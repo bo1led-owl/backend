@@ -1,21 +1,20 @@
-const Self = @This();
+const BasicBlock = @This();
 
 const std = @import("std");
+const support = @import("support");
 const Value = @import("Value.zig");
-const ValueList = @import("ValueList.zig");
 
-pub const Index = enum(u32) {
-    _,
+pub const Index = support.indexAndIndexOpt(BasicBlock, u32).@"0";
+pub const IndexOpt = support.indexAndIndexOpt(BasicBlock, u32).@"1";
 
-    pub fn toU32(self: Index) u32 {
-        return @backingInt(self);
-    }
-};
+instructions: Value.List,
+arguments: Value.List,
 
-instructions: ValueList,
-arguments: ValueList,
+// to store a list of all basic blocks in functions
+prev: IndexOpt = .none,
+next: IndexOpt = .none,
 
-pub const empty: Self = .{
+pub const empty: BasicBlock = .{
     .instructions = .empty,
     .arguments = .empty,
 };
