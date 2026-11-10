@@ -2,7 +2,7 @@ const Self = @This();
 
 const std = @import("std");
 const Context = @import("Context.zig");
-const TypeHandle = @import("types.zig").TypeHandle;
+const Type = @import("Type.zig");
 const Value = @import("Value.zig");
 const Function = @import("Function.zig");
 const BasicBlock = @import("BasicBlock.zig");
@@ -37,8 +37,8 @@ fn makeIndentation(self: *Self) !void {
 pub fn printFunction(self: *Self, name: []const u8, function: Function) Error!void {
     try self.writer.print("{s}(", .{name});
 
-    const full_type = self.ctx.type_storage.getFullType(function.ty).function;
-    for (full_type.params, 0..) |param_type, i| {
+    const full_type = self.ctx.getFullType(function.ty).data.function;
+    for (self.ctx.getTypeExtras(full_type.params), 0..) |param_type, i| {
         if (i != 0) {
             try self.writer.writeAll(", ");
         }
@@ -58,10 +58,10 @@ pub fn printFunction(self: *Self, name: []const u8, function: Function) Error!vo
         var iter = function.stack_slots.iterator(self.ctx.values.slice());
         var first = true;
         while (iter.next()) |value_idx| {
+            defer first = false;
             if (!first) {
                 try self.writer.writeAll(", ");
             }
-            first = false;
 
             const slot_type = self.ctx.values.items(.ty)[value_idx.toInt()];
             try self.writer.print("v{d}: ", .{value_idx.toInt()});
@@ -79,10 +79,10 @@ pub fn printFunction(self: *Self, name: []const u8, function: Function) Error!vo
             var iter = bb.arguments.iterator(self.ctx.values.slice());
             var first = true;
             while (iter.next()) |value_idx| {
+                defer first = false;
                 if (!first) {
                     try self.writer.writeAll(", ");
                 }
-                first = false;
 
                 const arg_type = self.ctx.values.items(.ty)[value_idx.toInt()];
                 try self.writer.print("v{d}: ", .{value_idx.toInt()});
@@ -268,7 +268,7 @@ pub fn printInstruction(self: *Self, value_index: Value.Index) Error!void {
     }
 }
 
-pub fn printType(self: *Self, ty: TypeHandle) Error!void {
+pub fn printType(self: *Self, ty: Type.Handle) Error!void {
     switch (ty.kind) {
         .unit => try self.writer.writeAll("unit"),
         .ptr => try self.writer.writeAll("ptr"),
@@ -278,13 +278,12 @@ pub fn printType(self: *Self, ty: TypeHandle) Error!void {
         .int32 => try self.writer.writeAll("int32"),
         .int64 => try self.writer.writeAll("int64"),
         .function => {
-            const full_ty = self.ctx.type_storage.getFullType(ty).function;
+            const full_ty = self.ctx.getFullFunctionType(ty.aggregate_index);
+            const params = self.ctx.getTypeExtras(full_ty.params);
 
             try self.writer.writeByte('(');
-            var first = true;
-            for (full_ty.params) |param| {
-                defer first = false;
-                if (!first) {
+            for (params, 0..) |param, i| {
+                if (i > 0) {
                     try self.writer.writeAll(", ");
                 }
 
@@ -294,18 +293,18 @@ pub fn printType(self: *Self, ty: TypeHandle) Error!void {
             try self.printType(full_ty.rettype);
         },
         .@"struct" => {
-            const full_ty = self.ctx.type_storage.getFullType(ty).@"struct";
+            const full_ty = self.ctx.getFullStructType(ty.aggregate_index);
 
             if (full_ty.fields.len == 0) {
                 try self.writer.writeAll("struct {}");
                 return;
             }
 
+            const fields = self.ctx.getTypeExtras(full_ty.fields);
+
             try self.writer.writeAll("struct { ");
-            var first = true;
-            for (full_ty.fields) |field| {
-                defer first = false;
-                if (!first) {
+            for (fields, 0..) |field, i| {
+                if (i > 0) {
                     try self.writer.writeAll(", ");
                 }
 
@@ -314,7 +313,7 @@ pub fn printType(self: *Self, ty: TypeHandle) Error!void {
             try self.writer.writeAll(" }");
         },
         .array => {
-            const full_ty = self.ctx.type_storage.getFullType(ty).array;
+            const full_ty = self.ctx.getFullArrayType(ty.aggregate_index);
             try self.writer.print("[{d}]", .{full_ty.size});
             try self.printType(full_ty.element_type);
         },

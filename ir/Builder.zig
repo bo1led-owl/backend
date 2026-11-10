@@ -17,7 +17,7 @@ const Builder = @This();
 
 const std = @import("std");
 const Context = @import("Context.zig");
-const TypeHandle = @import("types.zig").TypeHandle;
+const Type = @import("Type.zig");
 const Value = @import("Value.zig");
 const Function = @import("Function.zig");
 const BasicBlock = @import("BasicBlock.zig");
@@ -114,7 +114,7 @@ fn createAndInsert(self: *Builder, value: Value) !Value.Index {
     return self.insert(try self.ctx.createValue(value));
 }
 
-fn getValueType(self: Builder, idx: Value.Index) TypeHandle {
+fn getValueType(self: Builder, idx: Value.Index) Type.Handle {
     return self.ctx.values.items(.ty)[idx.toInt()];
 }
 
@@ -149,20 +149,20 @@ pub fn createBasicBlock(self: *Builder) !BasicBlock.Index {
     return bb;
 }
 
-pub fn createBlockArgument(self: *Builder, ty: TypeHandle) !Value.Index {
+pub fn createBlockArgument(self: *Builder, ty: Type.Handle) !Value.Index {
     const res = try self.ctx.createValue(.{ .kind = .block_argument, .ty = ty });
     const arguments = &self.ctx.blocks.items(.arguments)[self.position.?.block.toInt()];
     arguments.append(self.ctx.values.slice(), res);
     return res;
 }
 
-pub fn createStackSlot(self: *Builder, ty: TypeHandle) !Value.Index {
+pub fn createStackSlot(self: *Builder, ty: Type.Handle) !Value.Index {
     const res = try self.ctx.createValue(.{ .kind = .stack_slot, .ty = ty });
     self.getFunctionPtr().stack_slots.append(self.ctx.values.slice(), res);
     return res;
 }
 
-pub fn newConstantInt(self: *Builder, ty: TypeHandle, value: u64) !Value.Index {
+pub fn newConstantInt(self: *Builder, ty: Type.Handle, value: u64) !Value.Index {
     return self.ctx.createValue(.{ .kind = .constant, .ty = ty, .data = .{ .constant = value } });
 }
 
@@ -171,7 +171,7 @@ pub fn newFunctionRef(self: *Builder, function_index: Function.Index) !Value.Ind
     return self.ctx.createValue(.{ .kind = .function_ref, .ty = ty, .data = .{ .function = function_index } });
 }
 
-pub fn createTruncate(self: *Builder, value: Value.Index, to: TypeHandle) !Value.Index {
+pub fn createTruncate(self: *Builder, value: Value.Index, to: Type.Handle) !Value.Index {
     return self.createAndInsert(.{
         .kind = .truncate,
         .ty = to,
@@ -179,7 +179,7 @@ pub fn createTruncate(self: *Builder, value: Value.Index, to: TypeHandle) !Value
     });
 }
 
-pub fn createSignExtend(self: *Builder, value: Value.Index, to: TypeHandle) !Value.Index {
+pub fn createSignExtend(self: *Builder, value: Value.Index, to: Type.Handle) !Value.Index {
     return self.createAndInsert(.{
         .kind = .sign_extend,
         .ty = to,
@@ -187,7 +187,7 @@ pub fn createSignExtend(self: *Builder, value: Value.Index, to: TypeHandle) !Val
     });
 }
 
-pub fn createZeroExtend(self: *Builder, value: Value.Index, to: TypeHandle) !Value.Index {
+pub fn createZeroExtend(self: *Builder, value: Value.Index, to: Type.Handle) !Value.Index {
     return self.createAndInsert(.{
         .kind = .zero_extend,
         .ty = to,
@@ -296,7 +296,7 @@ pub fn createStackAddress(self: *Builder, slot: Value.Index) !Value.Index {
     });
 }
 
-pub fn createLoad(self: *Builder, ty: TypeHandle, from: Value.Index) !Value.Index {
+pub fn createLoad(self: *Builder, ty: Type.Handle, from: Value.Index) !Value.Index {
     return self.createAndInsert(.{
         .kind = .load,
         .ty = ty,
@@ -359,7 +359,7 @@ pub fn createBr(
 
 pub fn createCall(self: *Builder, callee: Value.Index, arguments: []const Value.Index) !Value.Index {
     const callee_type_handle = self.ctx.values.items(.ty)[callee.toInt()];
-    const callee_type = self.ctx.type_storage.getFullType(callee_type_handle).function;
+    const callee_type = self.ctx.type_storage.getFullType(callee_type_handle).data.function;
     std.debug.assert(arguments.len == callee_type.params.len);
 
     const prev_extras_len = self.ctx.extras.items.len;
@@ -394,6 +394,8 @@ pub fn createRetVoid(self: *Builder) !Value.Index {
 }
 
 test "basic usage" {
+    // FIXME
+
     const gpa = std.testing.allocator;
 
     var ctx: Context = .init(gpa);
@@ -402,7 +404,7 @@ test "basic usage" {
     var builder, _ = try Builder.initWithNewFunction(&ctx, "main");
     const entry_block_idx = builder.block;
 
-    const int32: TypeHandle = .{ .kind = .int32 };
+    const int32: Type.Handle = .{ .kind = .int32 };
 
     const a = try builder.createBlockArgument(int32);
     const b = try builder.createBlockArgument(int32);

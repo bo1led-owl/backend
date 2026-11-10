@@ -4,7 +4,7 @@ const std = @import("std");
 const support = @import("support");
 const Context = @import("Context.zig");
 const BasicBlock = @import("BasicBlock.zig");
-const TypeHandle = @import("types.zig").TypeHandle;
+const Type = @import("Type.zig");
 const Function = @import("Function.zig");
 
 pub const Index = support.indexAndIndexOpt(Value, u32).@"0";
@@ -13,7 +13,7 @@ pub const IndexOpt = support.indexAndIndexOpt(Value, u32).@"1";
 pub const List = @import("list.zig").List(Value, Index, IndexOpt);
 
 kind: Kind,
-ty: TypeHandle,
+ty: Type.Handle,
 data: Data = undefined,
 prev: Value.IndexOpt = .none,
 next: Value.IndexOpt = .none,
@@ -241,8 +241,11 @@ pub const info = struct {
 
         const data = ctx.values.items(.data)[value.toInt()].call;
         const callee_index = data.callee;
+
         const callee_type_handle = ctx.values.items(.ty)[callee_index.toInt()];
-        const callee_type = ctx.type_storage.getFullType(callee_type_handle).function;
+        std.debug.assert(callee_type_handle.kind == .function);
+        const callee_type = ctx.getFullFunctionType(callee_type_handle.aggregate_index);
+
         const args: []const Value.Index = @ptrCast(ctx.getExtras(.{
             .begin = data.first_arg,
             .len = @intCast(callee_type.params.len),
